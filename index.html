@@ -75,6 +75,9 @@
   .status.live   { color: #00e676; }
   .status.final  { color: #bdbdbd; }
   .status.upcoming { color: #fff; }
+  .status .ko-day  { display:block; font-size:16px; color:#00e676; letter-spacing:3px; margin-bottom:6px; }
+  .status .ko-main { display:block; font-size:30px; font-weight:900; letter-spacing:1px; }
+  .status .ko-main small { font-size:14px; color:#888; font-weight:700; text-transform:none; }
   .status .live-dot {
     display: inline-block; width: 12px; height: 12px; border-radius: 50%;
     background: #00e676; margin-right: 8px; vertical-align: middle;
@@ -347,7 +350,9 @@ function renderStage() {
   } else if (m.status === "final") {
     statusHtml = `<div class="status final">FINAL</div>`;
   } else {
-    statusHtml = `<div class="status upcoming">${m.time || "—"} · HORA LOCAL</div>`;
+    statusHtml = `<div class="status upcoming">
+      ${m.day ? `<span class="ko-day">${m.day}</span>` : ""}
+      <span class="ko-main">${m.time || "—"} <small>tu hora local</small></span></div>`;
   }
 
   const hasScore = (m.status === "live" || m.status === "final");
@@ -581,6 +586,12 @@ function fmtTime(ev) {              // hora local del usuario a partir del times
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function fmtDay(ev) {               // día local (se adapta al país del usuario)
+  const d = kickoffDate(ev);
+  if (!d) return "";
+  return d.toLocaleDateString([], { weekday: "short", day: "2-digit", month: "short" });
+}
+
 /* Convierte un evento de TheSportsDB a nuestra estructura, según su estado */
 function mapEvent(ev) {
   const st = (ev.strStatus || "").toUpperCase().trim();
@@ -604,7 +615,7 @@ function mapEvent(ev) {
   if (FINAL_ST.includes(st) || (hasScore && started)) {
     return { bucket: "results", item: { ...base, hs: +hs||0, as: +as||0, status: "final" } };
   }
-  return { bucket: "upcoming", item: { ...base, status: "upcoming", time: fmtTime(ev),
+  return { bucket: "upcoming", item: { ...base, status: "upcoming", time: fmtTime(ev), day: fmtDay(ev),
     probHome: null, probDraw: null, probAway: null } };   // TheSportsDB gratis no da probabilidades
 }
 
@@ -640,19 +651,35 @@ function buildGroupsFromTable(rows) {
   });
 }
 
+/* Lista de fechas YYYY-MM-DD desde hoy (UTC) hacia adelante */
+function nextDates(n) {
+  const arr = [];
+  const d = new Date();
+  for (let i = 0; i < n; i++) {
+    arr.push(d.toISOString().slice(0, 10));
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return arr;
+}
+
 async function loadData() {
   if (!API_CONFIG.ENABLED) { DATA = FALLBACK_DATA; render(); return; }
   try {
     const L = API_CONFIG.LEAGUE_ID, S = API_CONFIG.SEASON;
-    // 4 fuentes: pasados (incluye EN VIVO), próximos, temporada y tabla de grupos
-    const [past, next, season, table] = await Promise.allSettled([
+    // La clave gratis solo da 1 próximo en eventsnextleague, así que completamos
+    // los partidos REALES que faltan consultando día por día (hoy en adelante).
+    const dayCalls = nextDates(18).map(d => getJSON(`eventsday.php?d=${d}&l=${L}`));
+    // Fuentes base: pasados (incluye EN VIVO), próximos, temporada y tabla de grupos
+    const settled = await Promise.allSettled([
       getJSON(`eventspastleague.php?id=${L}`),
       getJSON(`eventsnextleague.php?id=${L}`),
       getJSON(`eventsseason.php?id=${L}&s=${S}`),
       getJSON(`lookuptable.php?l=${L}&s=${S}`),
+      ...dayCalls,
     ]);
+    const [past, next, season, table, ...days] = settled;
     const evs = [];
-    for (const r of [past, next, season]) {
+    for (const r of [past, next, season, ...days]) {
       if (r.status === "fulfilled" && r.value && r.value.events) evs.push(...r.value.events);
     }
     // dedupe por idEvent
