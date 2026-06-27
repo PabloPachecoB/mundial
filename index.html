@@ -817,18 +817,20 @@ let prevLive = {};   // idEvent -> { hs, as } del último sondeo
    celebrate=false solo guarda la línea base (sin festejar). */
 function diffLive(liveItems, celebrate) {
   const nextMap = {};
+  let goalId = null;                 // id del partido donde cayó el gol (para enfocarlo)
   for (const it of liveItems) {
     const hs = it.hs || 0, as = it.as || 0;
     nextMap[it.id] = { hs, as };
     if (celebrate) {
       const prev = prevLive[it.id];
       if (prev) {
-        if (hs > prev.hs)      celebrateGoal(it.homeName || it.home);
-        else if (as > prev.as) celebrateGoal(it.awayName || it.away);
+        if (hs > prev.hs)      { celebrateGoal(it.homeName || it.home); goalId = it.id; }
+        else if (as > prev.as) { celebrateGoal(it.awayName || it.away); goalId = it.id; }
       }
     }
   }
   prevLive = nextMap;
+  return goalId;
 }
 
 /* Sondea los partidos recientes (incluye EN VIVO) y festeja goles nuevos */
@@ -844,9 +846,17 @@ async function pollLive() {
       const { bucket, item } = mapEvent(ev);
       if (bucket === "live") live.push({ ...item, _ts: ev.strTimestamp || ev.dateEvent || "" });
     }
-    diffLive(live, true);                       // celebra goles nuevos
+    const goalId = diffLive(live, true);        // celebra goles nuevos
     DATA.live = live;                           // refresca el bucket en vivo
-    if (TABS[tabIndex].key === "live") renderStage();
+    if (goalId != null) {
+      // gol: salta a EN VIVO y enfoca el partido que anotó
+      const liveTab = TABS.findIndex(t => t.key === "live");
+      const idx = live.findIndex(x => x.id === goalId);
+      if (liveTab >= 0) { tabIndex = liveTab; if (idx >= 0) matchIndex[liveTab] = idx; }
+      render();
+    } else if (TABS[tabIndex].key === "live") {
+      renderStage();
+    }
   } catch (e) { /* ignora fallos de red puntuales */ }
 }
 
