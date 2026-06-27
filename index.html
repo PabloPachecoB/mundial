@@ -475,6 +475,17 @@ function renderGroups() {
 
 function render() { renderTabs(); renderStage(); }
 
+/* Pantalla de carga inicial: evita mostrar el respaldo (México-Canadá) y que
+   "se resetee" cuando llega la respuesta real de la API. */
+function renderLoading() {
+  renderTabs();
+  $stage.classList.remove("scroll");
+  $hdots.innerHTML = "";
+  $stage.innerHTML = `<div class="notice anim">
+    <div class="big">Cargando…</div>
+    <div class="sub">Conectando con TheSportsDB</div></div>`;
+}
+
 /* =====================================================================
    NAVEGACIÓN
    ===================================================================== */
@@ -555,11 +566,18 @@ function abbr(name) {
 const LIVE_ST  = ["1H","2H","HT","ET","BT","P","LIVE","INPLAY","BREAK"];
 const FINAL_ST = ["FT","AET","PEN","FT_PEN","MATCH FINISHED","AWARDED"];
 
-function fmtTime(ev) {              // hora local del usuario a partir del timestamp
-  const ts = ev.strTimestamp || (ev.dateEvent && ev.strTime ? ev.dateEvent + "T" + ev.strTime : null);
-  if (!ts) return ev.strTime ? ev.strTime.slice(0,5) : "—";
+/* Fecha/hora de inicio (Date) a partir del timestamp del evento; null si no hay */
+function kickoffDate(ev) {
+  const ts = ev.strTimestamp || (ev.dateEvent && ev.strTime ? ev.dateEvent + "T" + ev.strTime
+            : (ev.dateEvent ? ev.dateEvent + "T00:00:00" : null));
+  if (!ts) return null;
   const d = new Date(ts.endsWith("Z") || ts.includes("+") ? ts : ts + "Z");
-  if (isNaN(d)) return ev.strTime ? ev.strTime.slice(0,5) : "—";
+  return isNaN(d) ? null : d;
+}
+
+function fmtTime(ev) {              // hora local del usuario a partir del timestamp
+  const d = kickoffDate(ev);
+  if (!d) return ev.strTime ? ev.strTime.slice(0,5) : "—";
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
@@ -573,11 +591,17 @@ function mapEvent(ev) {
     comp: (ev.strLeague || "MUNDIAL").toUpperCase(),
     home: abbr(homeName), homeName, away: abbr(awayName), awayName,
   };
+  const ko = kickoffDate(ev);
+  const started = ko ? Date.now() >= ko.getTime() : false;   // ¿ya empezó (o pasó) el partido?
+  const hasScore = hs != null && hs !== "" && as != null && as !== "";
+
   if (LIVE_ST.includes(st) || (ev.strProgress && ev.strProgress !== "" && !FINAL_ST.includes(st))) {
     return { bucket: "live", item: { ...base, hs: +hs||0, as: +as||0, status: "live",
       minute: ev.strProgress ? ev.strProgress + "'" : (st === "HT" ? "DESC." : "EN VIVO") } };
   }
-  if (FINAL_ST.includes(st) || (hs != null && hs !== "" && as != null && as !== "")) {
+  // FINAL solo si el estado lo dice, o si hay marcador Y el partido ya se jugó.
+  // (TheSportsDB suele mandar 0-0 como placeholder en partidos futuros: NO son finales)
+  if (FINAL_ST.includes(st) || (hasScore && started)) {
     return { bucket: "results", item: { ...base, hs: +hs||0, as: +as||0, status: "final" } };
   }
   return { bucket: "upcoming", item: { ...base, status: "upcoming", time: fmtTime(ev),
@@ -660,7 +684,7 @@ async function loadData() {
 }
 
 /* arranque */
-render();
+renderLoading();   // muestra "Cargando…" hasta que loadData() pinte datos reales
 loadData();
 </script>
 </body>
