@@ -164,6 +164,16 @@
 
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
 
+  /* Botón para probar la celebración de gol con un toque */
+  #testgol {
+    position:absolute; bottom:14px; right:14px; z-index:7;
+    width:40px; height:40px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:22px; background:#111; border:2px solid #00e676;
+    cursor:pointer; user-select:none;
+  }
+  #testgol:active { transform:scale(.9); }
+
   /* ====== CELEBRACIÓN DE GOL: papelitos + cartel ====== */
   #fx { position:absolute; inset:0; pointer-events:none; z-index:60; overflow:hidden; }
   .confetti {
@@ -197,6 +207,7 @@
     <div id="hdots"></div>
     <span class="arrow">›</span>
   </div>
+  <div id="testgol" title="Probar gol">⚽</div>
 </div>
 
 <script>
@@ -638,6 +649,14 @@ function armAudio() { unlockAudio(); }
 app.addEventListener("touchstart", armAudio, { once: true, passive: true });
 app.addEventListener("mousedown", armAudio, { once: true });
 window.addEventListener("keydown", (e) => { if (e.key === "g" || e.key === "G") celebrateGoal("PRUEBA"); });
+
+/* botón ⚽ de prueba: un toque/clic dispara la celebración */
+const $testgol = document.getElementById("testgol");
+if ($testgol) {
+  const fire = (e) => { e.preventDefault(); e.stopPropagation(); unlockAudio(); celebrateGoal("PRUEBA"); };
+  $testgol.addEventListener("click", fire);
+  $testgol.addEventListener("touchstart", fire, { passive: false });
+}
 
 /* =====================================================================
    CARGA DESDE API + PARSER  (adapta parseApiResponse a tu proveedor)
