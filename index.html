@@ -864,6 +864,15 @@ async function pollLive() {
 renderLoading();   // muestra "Cargando…" hasta que loadData() pinte datos reales
 loadData();
 setInterval(pollLive, 30 * 1000);   // revisa goles en vivo cada 30 s
+
+/* Prueba de celebración: abre la web con  ?gol=1  (o #gol) y a los ~3 s
+   dispara una celebración de gol automática, sin teclado. Ideal para
+   verificar en los Ray-Ban Display que se ven los papelitos y el cartel.
+   (El sonido solo suena si tocas la pantalla una vez antes.) */
+if (/[?&#]gol=1/.test(location.href) || location.hash === "#gol") {
+  setTimeout(() => celebrateGoal("PRUEBA"), 3000);
+  setTimeout(() => celebrateGoal("PRUEBA"), 8000);   // repite por si te lo perdiste
+}
 </script>
 </body>
 </html>
