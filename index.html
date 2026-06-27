@@ -164,6 +164,24 @@
 
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
 
+  /* ====== CELEBRACIÓN DE GOL: papelitos + cartel ====== */
+  #fx { position:absolute; inset:0; pointer-events:none; z-index:60; overflow:hidden; }
+  .confetti {
+    position:absolute; top:-24px; width:10px; height:16px; border-radius:2px;
+    opacity:.95; animation: confFall linear forwards;
+  }
+  @keyframes confFall { to { transform: translateY(680px) rotate(var(--r,720deg)); } }
+  .goalbanner {
+    position:absolute; inset:0; z-index:61; pointer-events:none;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+  }
+  .goalbanner .g {
+    font-size:92px; font-weight:900; color:#00e676; letter-spacing:4px;
+    text-shadow:0 0 30px rgba(0,230,118,.65); animation: goalPop .5s ease-out;
+  }
+  .goalbanner .gt { font-size:28px; font-weight:800; color:#fff; margin-top:4px; letter-spacing:1px; }
+  @keyframes goalPop { 0%{transform:scale(.3);opacity:0} 60%{transform:scale(1.18)} 100%{transform:scale(1);opacity:1} }
+
   /* animación de entrada al cambiar de partido/pestaña */
   .anim { animation: fade .18s ease-out; }
   @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
@@ -543,6 +561,85 @@ app.addEventListener("mousedown", (e) => startGesture(e.clientX, e.clientY));
 app.addEventListener("mouseup",   (e) => endGesture(e.clientX, e.clientY));
 
 /* =====================================================================
+   CELEBRACIÓN DE GOL EN VIVO  ·  sonido + papelitos (confeti)
+   Se dispara cuando el marcador de un partido EN VIVO sube entre
+   actualizaciones. Pulsa "G" para probar la animación.
+   ===================================================================== */
+let actx = null;                       // AudioContext (se desbloquea al 1er toque)
+function unlockAudio() {
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === "suspended") actx.resume();
+  } catch (e) { /* sin audio disponible */ }
+}
+
+function playGoalSound() {
+  if (!actx) return;
+  const now = actx.currentTime;
+  // corneta de gol (melodía ascendente)
+  [[523,0],[659,.12],[784,.24],[1047,.42]].forEach(([f,t]) => {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = "sawtooth"; o.frequency.value = f;
+    g.gain.setValueAtTime(0.0001, now + t);
+    g.gain.exponentialRampToValueAtTime(0.25, now + t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + t + 0.5);
+    o.connect(g).connect(actx.destination);
+    o.start(now + t); o.stop(now + t + 0.55);
+  });
+  // rugido de multitud (ruido filtrado que se apaga)
+  const dur = 1.8, buf = actx.createBuffer(1, Math.floor(actx.sampleRate * dur), actx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 1.4);
+  const noise = actx.createBufferSource(); noise.buffer = buf;
+  const filt = actx.createBiquadFilter(); filt.type = "bandpass"; filt.frequency.value = 900;
+  const ng = actx.createGain(); ng.gain.value = 0.14;
+  noise.connect(filt).connect(ng).connect(actx.destination);
+  noise.start(now + 0.35);
+}
+
+function spawnConfetti() {
+  let fx = document.getElementById("fx");
+  if (!fx) { fx = document.createElement("div"); fx.id = "fx"; app.appendChild(fx); }
+  const colors = ["#00e676", "#ffffff", "#ffd400", "#ff3d6e", "#29b6f6", "#ff9100"];
+  const N = 90;
+  for (let i = 0; i < N; i++) {
+    const p = document.createElement("div");
+    p.className = "confetti";
+    const dur = 1.8 + Math.random() * 1.6;
+    p.style.left = Math.random() * 100 + "%";
+    p.style.background = colors[(Math.random() * colors.length) | 0];
+    p.style.setProperty("--r", (360 + Math.random() * 720) + "deg");
+    p.style.animationDuration = dur + "s";
+    p.style.animationDelay = (Math.random() * 0.5) + "s";
+    p.style.opacity = (0.7 + Math.random() * 0.3).toFixed(2);
+    if (Math.random() < 0.5) p.style.borderRadius = "50%";  // mezcla cuadrados y círculos
+    fx.appendChild(p);
+    setTimeout(() => p.remove(), (dur + 0.6) * 1000);
+  }
+}
+
+function showGoalBanner(team) {
+  const b = document.createElement("div");
+  b.className = "goalbanner";
+  b.innerHTML = `<div class="g">¡GOOOL!</div>${team ? `<div class="gt">${team}</div>` : ""}`;
+  app.appendChild(b);
+  setTimeout(() => b.remove(), 3000);
+}
+
+function celebrateGoal(team) {
+  unlockAudio();
+  playGoalSound();
+  spawnConfetti();
+  showGoalBanner(team);
+}
+
+/* desbloqueo de audio + tecla de prueba */
+function armAudio() { unlockAudio(); }
+app.addEventListener("touchstart", armAudio, { once: true, passive: true });
+app.addEventListener("mousedown", armAudio, { once: true });
+window.addEventListener("keydown", (e) => { if (e.key === "g" || e.key === "G") celebrateGoal("PRUEBA"); });
+
+/* =====================================================================
    CARGA DESDE API + PARSER  (adapta parseApiResponse a tu proveedor)
    ===================================================================== */
 /* Códigos FIFA de 3 letras por selección (las que faltan se autogeneran) */
@@ -694,6 +791,7 @@ async function loadData() {
     // ordenar: resultados más recientes primero; próximos más cercanos primero
     out.results.sort((a, b) => (b._ts > a._ts ? 1 : -1));
     out.upcoming.sort((a, b) => (a._ts > b._ts ? 1 : -1));
+    diffLive(out.live, false);   // fija la línea base (sin celebrar en la carga inicial)
 
     // tabla de grupos: usa la real si trae datos suficientes, si no, respaldo
     let groups = null;
@@ -710,9 +808,52 @@ async function loadData() {
   render();
 }
 
+/* =====================================================================
+   GOLES EN VIVO  ·  detección por cambio de marcador + sondeo periódico
+   ===================================================================== */
+let prevLive = {};   // idEvent -> { hs, as } del último sondeo
+
+/* Compara el marcador en vivo con el anterior; si subió, celebra el gol.
+   celebrate=false solo guarda la línea base (sin festejar). */
+function diffLive(liveItems, celebrate) {
+  const nextMap = {};
+  for (const it of liveItems) {
+    const hs = it.hs || 0, as = it.as || 0;
+    nextMap[it.id] = { hs, as };
+    if (celebrate) {
+      const prev = prevLive[it.id];
+      if (prev) {
+        if (hs > prev.hs)      celebrateGoal(it.homeName || it.home);
+        else if (as > prev.as) celebrateGoal(it.awayName || it.away);
+      }
+    }
+  }
+  prevLive = nextMap;
+}
+
+/* Sondea los partidos recientes (incluye EN VIVO) y festeja goles nuevos */
+async function pollLive() {
+  if (!API_CONFIG.ENABLED) return;
+  try {
+    const r = await getJSON(`eventspastleague.php?id=${API_CONFIG.LEAGUE_ID}`);
+    if (!r || !r.events) return;
+    const live = [], seen = new Set();
+    for (const ev of r.events) {
+      if (!ev || seen.has(ev.idEvent)) continue;
+      seen.add(ev.idEvent);
+      const { bucket, item } = mapEvent(ev);
+      if (bucket === "live") live.push({ ...item, _ts: ev.strTimestamp || ev.dateEvent || "" });
+    }
+    diffLive(live, true);                       // celebra goles nuevos
+    DATA.live = live;                           // refresca el bucket en vivo
+    if (TABS[tabIndex].key === "live") renderStage();
+  } catch (e) { /* ignora fallos de red puntuales */ }
+}
+
 /* arranque */
 renderLoading();   // muestra "Cargando…" hasta que loadData() pinte datos reales
 loadData();
+setInterval(pollLive, 30 * 1000);   // revisa goles en vivo cada 30 s
 </script>
 </body>
 </html>
