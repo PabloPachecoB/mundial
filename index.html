@@ -153,18 +153,17 @@
 /* =====================================================================
    CONFIGURACIÓN DE LA API  (edítala aquí)
    ---------------------------------------------------------------------
-   Ejemplo preparado para API-Football (api-sports.io). Cambia la URL,
-   las cabeceras y/o el parser (parseApiResponse) según tu proveedor.
-   Si la API falla, vacía o sin clave, se usan los datos de respaldo.
+   Conectado a TheSportsDB (GRATIS, sin registro, permite CORS desde el
+   navegador). La clave "3" es la pública de prueba. Si tienes una clave
+   Patreon propia, ponla en API_KEY para más resultados y livescore.
+   Si la API falla o viene vacía, se usan los DATOS DE RESPALDO.
    ===================================================================== */
 const API_CONFIG = {
-  ENABLED: false,                              // pon true cuando tengas clave
-  BASE_URL: "https://v3.football.api-sports.io/fixtures",
-  API_KEY:  "TU_API_KEY_AQUI",
-  HEADER_NAME: "x-apisports-key",              // cabecera de autenticación
-  LEAGUE_ID: 1,                                // 1 = Copa del Mundo (API-Football)
-  SEASON: 2026,
-  TIMEZONE: "America/Mexico_City"
+  ENABLED:   true,                             // true = datos reales
+  API_KEY:   "3",                              // "3" = clave pública de prueba
+  BASE_URL:  "https://www.thesportsdb.com/api/v1/json",
+  LEAGUE_ID: 4429,                             // 4429 = FIFA World Cup
+  SEASON:    "2026"
 };
 
 /* =====================================================================
@@ -376,53 +375,96 @@ app.addEventListener("mouseup",   (e) => endGesture(e.clientX, e.clientY));
 /* =====================================================================
    CARGA DESDE API + PARSER  (adapta parseApiResponse a tu proveedor)
    ===================================================================== */
+/* Códigos FIFA de 3 letras por selección (las que faltan se autogeneran) */
+const TEAM_ABBR = {
+  "Mexico":"MEX","Canada":"CAN","USA":"USA","United States":"USA","Argentina":"ARG",
+  "Brazil":"BRA","Spain":"ESP","Germany":"GER","France":"FRA","England":"ENG",
+  "Portugal":"POR","Uruguay":"URU","Netherlands":"NED","Croatia":"CRO","Belgium":"BEL",
+  "Colombia":"COL","Japan":"JPN","South Korea":"KOR","Korea Republic":"KOR","Italy":"ITA",
+  "Morocco":"MAR","Senegal":"SEN","Ghana":"GHA","Nigeria":"NGA","Cameroon":"CMR",
+  "Egypt":"EGY","Iran":"IRN","Saudi Arabia":"KSA","Qatar":"QAT","Australia":"AUS",
+  "Switzerland":"SUI","Denmark":"DEN","Poland":"POL","Sweden":"SWE","Norway":"NOR",
+  "Austria":"AUT","Serbia":"SRB","Czech Republic":"CZE","Czechia":"CZE","Wales":"WAL",
+  "Scotland":"SCO","Ecuador":"ECU","Peru":"PER","Chile":"CHI","Paraguay":"PAR",
+  "Costa Rica":"CRC","Panama":"PAN","Honduras":"HON","Jamaica":"JAM","South Africa":"RSA",
+  "Tunisia":"TUN","Algeria":"ALG","Ivory Coast":"CIV","Bosnia-Herzegovina":"BIH",
+  "Turkey":"TUR","Greece":"GRE","Ukraine":"UKR","Russia":"RUS","New Zealand":"NZL",
+  "Uzbekistan":"UZB","Jordan":"JOR","Cape Verde":"CPV","Curacao":"CUW","Haiti":"HAI"
+};
 function abbr(name) {
-  return (name || "").normalize("NFD").replace(/[^A-Za-z ]/g,"")
-    .trim().slice(0,3).toUpperCase() || "???";
+  if (!name) return "???";
+  if (TEAM_ABBR[name]) return TEAM_ABBR[name];
+  return name.normalize("NFD").replace(/[^A-Za-z ]/g,"").trim().slice(0,3).toUpperCase() || "???";
 }
 
-/* Convierte la respuesta de API-Football en nuestra estructura.
-   Si usas otra API, reescribe SOLO esta función. */
-function parseApiResponse(json) {
-  const out = { live: [], results: [], upcoming: [] };
-  const items = (json && json.response) || [];
-  for (const it of items) {
-    const ft = it.fixture || {}, teams = it.teams || {}, goals = it.goals || {}, league = it.league || {};
-    const short = (ft.status && ft.status.short) || "";
-    const homeName = teams.home && teams.home.name, awayName = teams.away && teams.away.name;
-    const base = {
-      comp: (league.round || league.name || "MUNDIAL").toUpperCase(),
-      home: abbr(homeName), homeName, away: abbr(awayName), awayName,
-    };
-    if (["1H","2H","HT","ET","P","LIVE"].includes(short)) {
-      out.live.push({ ...base, hs: goals.home ?? 0, as: goals.away ?? 0,
-        status: "live", minute: (ft.status.elapsed ? ft.status.elapsed + "'" : "EN VIVO") });
-    } else if (["FT","AET","PEN"].includes(short)) {
-      out.results.push({ ...base, hs: goals.home ?? 0, as: goals.away ?? 0, status: "final" });
-    } else {                          // NS, TBD, etc.
-      const d = ft.date ? new Date(ft.date) : null;
-      const time = d ? d.toLocaleTimeString("es-MX", {hour:"2-digit", minute:"2-digit"}) : "—";
-      out.upcoming.push({ ...base, status: "upcoming", time,
-        probHome: null, probDraw: null, probAway: null });
-    }
+/* Estados de TheSportsDB */
+const LIVE_ST  = ["1H","2H","HT","ET","BT","P","LIVE","INPLAY","BREAK"];
+const FINAL_ST = ["FT","AET","PEN","FT_PEN","MATCH FINISHED","AWARDED"];
+
+function fmtTime(ev) {              // hora local del usuario a partir del timestamp
+  const ts = ev.strTimestamp || (ev.dateEvent && ev.strTime ? ev.dateEvent + "T" + ev.strTime : null);
+  if (!ts) return ev.strTime ? ev.strTime.slice(0,5) : "—";
+  const d = new Date(ts.endsWith("Z") || ts.includes("+") ? ts : ts + "Z");
+  if (isNaN(d)) return ev.strTime ? ev.strTime.slice(0,5) : "—";
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/* Convierte un evento de TheSportsDB a nuestra estructura, según su estado */
+function mapEvent(ev) {
+  const st = (ev.strStatus || "").toUpperCase().trim();
+  const homeName = ev.strHomeTeam, awayName = ev.strAwayTeam;
+  const hs = ev.intHomeScore, as = ev.intAwayScore;
+  const base = {
+    id: ev.idEvent,
+    comp: (ev.strLeague || "MUNDIAL").toUpperCase(),
+    home: abbr(homeName), homeName, away: abbr(awayName), awayName,
+  };
+  if (LIVE_ST.includes(st) || (ev.strProgress && ev.strProgress !== "" && !FINAL_ST.includes(st))) {
+    return { bucket: "live", item: { ...base, hs: +hs||0, as: +as||0, status: "live",
+      minute: ev.strProgress ? ev.strProgress + "'" : (st === "HT" ? "DESC." : "EN VIVO") } };
   }
-  return out;
+  if (FINAL_ST.includes(st) || (hs != null && hs !== "" && as != null && as !== "")) {
+    return { bucket: "results", item: { ...base, hs: +hs||0, as: +as||0, status: "final" } };
+  }
+  return { bucket: "upcoming", item: { ...base, status: "upcoming", time: fmtTime(ev),
+    probHome: null, probDraw: null, probAway: null } };   // TheSportsDB gratis no da probabilidades
+}
+
+async function getJSON(path) {
+  const url = `${API_CONFIG.BASE_URL}/${API_CONFIG.API_KEY}/${path}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
 }
 
 async function loadData() {
-  if (!API_CONFIG.ENABLED || API_CONFIG.API_KEY === "TU_API_KEY_AQUI") {
-    DATA = FALLBACK_DATA;            // sin clave => respaldo
-    render();
-    return;
-  }
+  if (!API_CONFIG.ENABLED) { DATA = FALLBACK_DATA; render(); return; }
   try {
-    const url = `${API_CONFIG.BASE_URL}?league=${API_CONFIG.LEAGUE_ID}&season=${API_CONFIG.SEASON}&timezone=${encodeURIComponent(API_CONFIG.TIMEZONE)}`;
-    const res = await fetch(url, { headers: { [API_CONFIG.HEADER_NAME]: API_CONFIG.API_KEY } });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const json = await res.json();
-    const parsed = parseApiResponse(json);
-    const total = parsed.live.length + parsed.results.length + parsed.upcoming.length;
-    DATA = total ? parsed : FALLBACK_DATA;   // respuesta vacía => respaldo
+    const L = API_CONFIG.LEAGUE_ID, S = API_CONFIG.SEASON;
+    // 3 fuentes: pasados (incluye EN VIVO), próximos y temporada (más resultados)
+    const [past, next, season] = await Promise.allSettled([
+      getJSON(`eventspastleague.php?id=${L}`),
+      getJSON(`eventsnextleague.php?id=${L}`),
+      getJSON(`eventsseason.php?id=${L}&s=${S}`),
+    ]);
+    const evs = [];
+    for (const r of [past, next, season]) {
+      if (r.status === "fulfilled" && r.value && r.value.events) evs.push(...r.value.events);
+    }
+    // dedupe por idEvent
+    const seen = new Set();
+    const out = { live: [], results: [], upcoming: [] };
+    for (const ev of evs) {
+      if (!ev || seen.has(ev.idEvent)) continue;
+      seen.add(ev.idEvent);
+      const { bucket, item } = mapEvent(ev);
+      out[bucket].push({ ...item, _ts: ev.strTimestamp || ev.dateEvent || "" });
+    }
+    // ordenar: resultados más recientes primero; próximos más cercanos primero
+    out.results.sort((a, b) => (b._ts > a._ts ? 1 : -1));
+    out.upcoming.sort((a, b) => (a._ts > b._ts ? 1 : -1));
+    const total = out.live.length + out.results.length + out.upcoming.length;
+    DATA = total ? out : FALLBACK_DATA;     // respuesta vacía => respaldo
   } catch (err) {
     console.warn("API falló, usando datos de respaldo:", err);
     DATA = FALLBACK_DATA;
