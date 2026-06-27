@@ -130,6 +130,35 @@
   .notice .sub { font-size: 18px; color: #888; }
   .notice .src { font-size: 14px; color: #00e676; letter-spacing: 1px; }
 
+  /* ====== RESULTADOS: cards de grupos + tabla desplegable ====== */
+  #stage.scroll { overflow-y: auto; overflow-x: hidden; }
+  #stage.scroll::-webkit-scrollbar { width: 0; }
+  .groups { padding: 8px 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+  .gcard {
+    background: #0d0d0d; border: 2px solid #1c1c1c; border-radius: 14px;
+    overflow: hidden; transition: border-color .15s;
+  }
+  .gcard.focused { border-color: #00e676; }
+  .ghead { display: flex; align-items: center; gap: 10px; padding: 16px 18px; }
+  .gname { font-size: 26px; font-weight: 900; letter-spacing: 1px; flex: 1; }
+  .gmeta { font-size: 14px; color: #777; font-weight: 700; }
+  .gchev { font-size: 18px; color: #00e676; font-weight: 900; transition: transform .2s; }
+  .gcard.open .gchev { transform: rotate(180deg); }
+
+  .gtable { padding: 0 10px 12px; }
+  .gtable table { width: 100%; border-collapse: collapse; }
+  .gtable th, .gtable td { padding: 8px 3px; text-align: center; font-size: 17px; }
+  .gtable th { color: #666; font-size: 12px; font-weight: 800; border-bottom: 1px solid #222; }
+  .gtable td.pos  { color: #777; font-weight: 800; width: 20px; }
+  .gtable td.team { text-align: left; font-weight: 800; white-space: nowrap; }
+  .gtable th.teamh{ text-align: left; }
+  .gtable td.pts  { color: #00e676; font-weight: 900; }
+  .gtable tr.qual td.team, .gtable tr.qual td.pos { color: #00e676; }
+  .gtable tr.qual { background: rgba(0,230,118,.06); }
+  .qbadge { color: #00e676; font-weight: 900; margin-left: 5px; }
+  .glegend { font-size: 12px; color: #666; padding: 6px 8px 0; }
+  .glegend b { color: #00e676; }
+
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
 
   /* animación de entrada al cambiar de partido/pestaña */
@@ -199,6 +228,46 @@ const FALLBACK_DATA = {
 };
 
 /* =====================================================================
+   TABLAS DE GRUPOS DE RESPALDO (12 grupos A–L)
+   Formato por equipo: [ABR, nombre, G, E, P, GF, GC]
+   normalizeGroups() calcula PJ, PTS, DG, ordena y marca los 2 primeros
+   como clasificados (✓). Se usan si la tabla real viene truncada/vacía.
+   ===================================================================== */
+const FALLBACK_GROUPS_RAW = [
+  { name:"GRUPO A", teams:[["MEX","México",3,0,0,7,2],["CRO","Croacia",1,1,1,4,3],["NOR","Noruega",1,0,2,3,5],["RSA","Sudáfrica",0,1,2,2,6]] },
+  { name:"GRUPO B", teams:[["CAN","Canadá",2,1,0,5,2],["BEL","Bélgica",2,0,1,6,3],["MAR","Marruecos",1,1,1,3,3],["KSA","Arabia Saudí",0,0,3,1,7]] },
+  { name:"GRUPO C", teams:[["USA","EE.UU.",2,1,0,6,3],["ENG","Inglaterra",2,1,0,5,2],["IRN","Irán",1,0,2,2,4],["PAN","Panamá",0,0,3,1,5]] },
+  { name:"GRUPO D", teams:[["ARG","Argentina",3,0,0,8,1],["SRB","Serbia",1,1,1,4,4],["TUN","Túnez",1,0,2,2,5],["AUS","Australia",0,1,2,2,6]] },
+  { name:"GRUPO E", teams:[["BRA","Brasil",2,1,0,7,2],["JPN","Japón",1,1,1,3,3],["CMR","Camerún",1,0,2,3,4],["CRC","Costa Rica",0,1,2,1,5]] },
+  { name:"GRUPO F", teams:[["FRA","Francia",2,1,0,6,2],["DEN","Dinamarca",1,2,0,4,2],["KOR","Corea",1,0,2,3,5],["GHA","Ghana",0,1,2,2,6]] },
+  { name:"GRUPO G", teams:[["ESP","España",3,0,0,9,2],["URU","Uruguay",1,1,1,4,3],["EGY","Egipto",1,0,2,2,5],["QAT","Catar",0,1,2,1,6]] },
+  { name:"GRUPO H", teams:[["POR","Portugal",2,1,0,5,1],["SUI","Suiza",1,1,1,3,3],["NGA","Nigeria",1,1,1,3,3],["UZB","Uzbekistán",0,1,2,1,5]] },
+  { name:"GRUPO I", teams:[["NED","Países Bajos",2,1,0,6,2],["SEN","Senegal",2,0,1,5,3],["POL","Polonia",1,0,2,3,4],["JAM","Jamaica",0,1,2,2,7]] },
+  { name:"GRUPO J", teams:[["GER","Alemania",2,1,0,6,2],["ECU","Ecuador",1,2,0,3,1],["ALG","Argelia",1,0,2,2,4],["JOR","Jordania",0,1,2,1,5]] },
+  { name:"GRUPO K", teams:[["ITA","Italia",2,1,0,5,2],["COL","Colombia",2,0,1,5,3],["CIV","Costa de Marfil",1,0,2,3,5],["NZL","Nueva Zelanda",0,1,2,2,5]] },
+  { name:"GRUPO L", teams:[["PER","Perú",2,1,0,4,1],["CHI","Chile",1,1,1,3,2],["CZE","Chequia",1,0,2,3,4],["HON","Honduras",0,1,2,1,4]] },
+];
+
+/* Calcula PJ/PTS/DG, ordena y marca clasificados (2 primeros por defecto) */
+function normalizeGroups(raw) {
+  return raw.map(grp => {
+    const teams = grp.teams.map(t => {
+      if (Array.isArray(t)) {
+        const [a,n,g,e,p,gf,gc] = t;
+        return { abbr:a, name:n, g, e, p, gf, gc, pj:g+e+p, pts:g*3+e, gd:gf-gc };
+      }
+      return t;
+    });
+    teams.sort((a,b) => b.pts-a.pts || b.gd-a.gd || b.gf-a.gf);
+    const anyQ = teams.some(t => t.qualified);
+    teams.forEach((t,i) => { if (t.qualified === undefined) t.qualified = !anyQ && i < 2; });
+    return { name: grp.name, teams };
+  });
+}
+const FALLBACK_GROUPS = normalizeGroups(FALLBACK_GROUPS_RAW);
+FALLBACK_DATA.groups = FALLBACK_GROUPS;
+
+/* =====================================================================
    PESTAÑAS
    ===================================================================== */
 const TABS = [
@@ -242,13 +311,17 @@ function renderTabs() {
 }
 
 function currentList() {
-  return DATA[TABS[tabIndex].key] || [];
+  const key = TABS[tabIndex].key;
+  if (key === "results") return DATA.groups || [];   // RESULTADOS navega por grupos
+  return DATA[key] || [];
 }
 
 function renderStage() {
+  $hdots.innerHTML = "";
+  if (TABS[tabIndex].key === "results") { renderGroups(); return; }
+  $stage.classList.remove("scroll");
   const list = currentList();
   $stage.innerHTML = "";
-  $hdots.innerHTML = "";
 
   if (!list.length) {
     const n = document.createElement("div");
@@ -317,6 +390,87 @@ function renderStage() {
     d.className = "hdot" + (i === matchIndex[tabIndex] ? " on" : "");
     $hdots.appendChild(d);
   });
+}
+
+/* ====== RESULTADOS: cards de grupos con tabla desplegable ====== */
+function renderGroups() {
+  const groups = DATA.groups || [];
+  $stage.innerHTML = "";
+  $stage.classList.add("scroll");
+
+  if (!groups.length) {
+    $stage.classList.remove("scroll");
+    const n = document.createElement("div");
+    n.className = "notice anim";
+    n.innerHTML = `<div class="big">Sin tablas de grupos</div>
+      <div class="sub">Desliza ↑ ↓ para cambiar de pestaña</div>`;
+    $stage.appendChild(n);
+    return;
+  }
+
+  // grupo enfocado/seleccionado (reutiliza el índice horizontal)
+  let fi = matchIndex[tabIndex];
+  if (fi >= groups.length) fi = groups.length - 1;
+  if (fi < 0) fi = 0;
+  matchIndex[tabIndex] = fi;
+
+  const cont = document.createElement("div");
+  cont.className = "groups anim";
+
+  groups.forEach((g, i) => {
+    const open = i === fi;                          // el seleccionado se despliega
+    const card = document.createElement("div");
+    card.className = "gcard" + (open ? " focused open" : "");
+
+    let html = `<div class="ghead">
+        <span class="gname">${g.name}</span>
+        <span class="gmeta">${open ? "" : g.teams.length + " equipos"}</span>
+        <span class="gchev">▾</span>
+      </div>`;
+
+    if (open) {
+      let rows = "";
+      g.teams.forEach((t, idx) => {
+        const dg = t.gd > 0 ? "+" + t.gd : t.gd;
+        rows += `<tr class="${t.qualified ? "qual" : ""}">
+          <td class="pos">${idx + 1}</td>
+          <td class="team">${t.abbr}${t.qualified ? '<span class="qbadge">✓</span>' : ""}</td>
+          <td>${t.pj}</td><td>${t.g}</td><td>${t.e}</td><td>${t.p}</td>
+          <td>${t.gf}</td><td>${t.gc}</td><td>${dg}</td>
+          <td class="pts">${t.pts}</td></tr>`;
+      });
+      html += `<div class="gtable">
+        <table>
+          <thead><tr>
+            <th></th><th class="teamh">EQUIPO</th><th>PJ</th><th>G</th><th>E</th>
+            <th>P</th><th>GF</th><th>GC</th><th>DG</th><th>PTS</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div class="glegend"><b>✓</b> Clasificado a la siguiente ronda</div>
+      </div>`;
+    }
+
+    card.innerHTML = html;
+    card.addEventListener("click", () => {          // tocar una card la selecciona/despliega
+      matchIndex[tabIndex] = i;
+      renderStage();
+    });
+    cont.appendChild(card);
+  });
+
+  $stage.appendChild(cont);
+
+  // puntos del pie = nº de grupos
+  groups.forEach((_, i) => {
+    const d = document.createElement("div");
+    d.className = "hdot" + (i === fi ? " on" : "");
+    $hdots.appendChild(d);
+  });
+
+  // mantener el grupo seleccionado a la vista
+  const focusedEl = cont.children[fi];
+  if (focusedEl) focusedEl.scrollIntoView({ block: "nearest" });
 }
 
 function render() { renderTabs(); renderStage(); }
@@ -437,15 +591,41 @@ async function getJSON(path) {
   return res.json();
 }
 
+/* Convierte la tabla (lookuptable) de TheSportsDB en grupos con clasificados.
+   Marca ✓ si strDescription indica clasificación, o por defecto a los 2 primeros. */
+function buildGroupsFromTable(rows) {
+  if (!rows || !rows.length) return null;
+  const byGroup = {};
+  for (const r of rows) {
+    const gname = (r.strGroup || "GRUPO").replace(/group/i, "GRUPO").toUpperCase().trim();
+    (byGroup[gname] = byGroup[gname] || []).push({
+      abbr: abbr(r.strTeam), name: r.strTeam,
+      pj:+r.intPlayed||0, g:+r.intWin||0, e:+r.intDraw||0, p:+r.intLoss||0,
+      gf:+r.intGoalsFor||0, gc:+r.intGoalsAgainst||0,
+      gd: (r.intGoalDifference != null && r.intGoalDifference !== "")
+            ? +r.intGoalDifference : (+r.intGoalsFor||0) - (+r.intGoalsAgainst||0),
+      pts:+r.intPoints||0, rank:+r.intRank||99,
+      qualified: /qualif|promot|advance|round of|knockout|clasif|próxim/i.test(r.strDescription || "")
+    });
+  }
+  return Object.keys(byGroup).sort().map(name => {
+    const teams = byGroup[name].sort((a,b) => a.rank-b.rank || b.pts-a.pts || b.gd-a.gd || b.gf-a.gf);
+    const anyQ = teams.some(t => t.qualified);
+    teams.forEach((t,i) => { if (!anyQ) t.qualified = i < 2; });   // por defecto: 2 primeros
+    return { name, teams };
+  });
+}
+
 async function loadData() {
   if (!API_CONFIG.ENABLED) { DATA = FALLBACK_DATA; render(); return; }
   try {
     const L = API_CONFIG.LEAGUE_ID, S = API_CONFIG.SEASON;
-    // 3 fuentes: pasados (incluye EN VIVO), próximos y temporada (más resultados)
-    const [past, next, season] = await Promise.allSettled([
+    // 4 fuentes: pasados (incluye EN VIVO), próximos, temporada y tabla de grupos
+    const [past, next, season, table] = await Promise.allSettled([
       getJSON(`eventspastleague.php?id=${L}`),
       getJSON(`eventsnextleague.php?id=${L}`),
       getJSON(`eventsseason.php?id=${L}&s=${S}`),
+      getJSON(`lookuptable.php?l=${L}&s=${S}`),
     ]);
     const evs = [];
     for (const r of [past, next, season]) {
@@ -463,6 +643,13 @@ async function loadData() {
     // ordenar: resultados más recientes primero; próximos más cercanos primero
     out.results.sort((a, b) => (b._ts > a._ts ? 1 : -1));
     out.upcoming.sort((a, b) => (a._ts > b._ts ? 1 : -1));
+
+    // tabla de grupos: usa la real si trae datos suficientes, si no, respaldo
+    let groups = null;
+    if (table.status === "fulfilled" && table.value) groups = buildGroupsFromTable(table.value.table);
+    const teamCount = groups ? groups.reduce((n, g) => n + g.teams.length, 0) : 0;
+    out.groups = teamCount >= 8 ? groups : FALLBACK_GROUPS;
+
     const total = out.live.length + out.results.length + out.upcoming.length;
     DATA = total ? out : FALLBACK_DATA;     // respuesta vacía => respaldo
   } catch (err) {
