@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=600, height=600, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Mundial 2026 · HUD</title>
+<style>
+  /* ====== Reset / base para HUD monocular 600x600 ====== */
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-user-select: none; user-select: none; }
+  html, body {
+    width: 600px; height: 600px;
+    background: #000;            /* negro puro */
+    color: #fff;                 /* texto blanco alto contraste */
+    overflow: hidden;
+    font-family: "Segoe UI", "Roboto", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  #app {
+    position: relative;
+    width: 600px; height: 600px;
+    background: #000;
+    overflow: hidden;
+    touch-action: none;          /* gestionamos swipe nosotros */
+  }
+
+  /* ====== Cabecera de pestañas ====== */
+  #tabs {
+    position: absolute; top: 0; left: 0; right: 0;
+    height: 70px;
+    display: flex; align-items: center; justify-content: center;
+    gap: 28px;
+    z-index: 5;
+  }
+  .tab {
+    font-size: 26px; font-weight: 800; letter-spacing: 1px;
+    color: #555;                 /* inactiva = gris tenue */
+    transition: color .2s;
+  }
+  .tab.active { color: #fff; }
+  .tab.active.live { color: #00e676; } /* acento verde */
+  .tab-dot {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    background: #00e676; margin-left: 8px; vertical-align: middle;
+    animation: pulse 1.2s infinite;
+  }
+
+  /* ====== Indicador vertical de pestaña (puntos a la izquierda) ====== */
+  #vdots {
+    position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; gap: 14px; z-index: 5;
+  }
+  .vdot { width: 12px; height: 12px; border-radius: 50%; background: #333; transition: background .2s, transform .2s; }
+  .vdot.on { background: #00e676; transform: scale(1.35); }
+
+  /* ====== Zona de partido ====== */
+  #stage { position: absolute; top: 70px; left: 0; right: 0; bottom: 60px; }
+  .match {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 0 40px;
+    text-align: center;
+  }
+
+  .competition {
+    font-size: 18px; font-weight: 700; letter-spacing: 3px;
+    color: #00e676; text-transform: uppercase; margin-bottom: 8px;
+  }
+
+  .status {
+    font-size: 22px; font-weight: 800; letter-spacing: 2px; margin-bottom: 26px;
+    text-transform: uppercase;
+  }
+  .status.live   { color: #00e676; }
+  .status.final  { color: #bdbdbd; }
+  .status.upcoming { color: #fff; }
+  .status .live-dot {
+    display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    background: #00e676; margin-right: 8px; vertical-align: middle;
+    animation: pulse 1.2s infinite;
+  }
+
+  /* fila de marcador: ABR  marcador  ABR */
+  .scoreline {
+    display: flex; align-items: center; justify-content: center; gap: 28px;
+    width: 100%;
+  }
+  .team { display: flex; flex-direction: column; align-items: center; width: 150px; }
+  .abbr { font-size: 64px; font-weight: 900; letter-spacing: 2px; line-height: 1; }
+  .name { font-size: 16px; color: #888; margin-top: 10px; font-weight: 600; }
+
+  .score {
+    font-size: 120px; font-weight: 900; line-height: .9;
+    min-width: 200px;
+  }
+  .score.tbd { font-size: 70px; color: #444; }
+  .score .sep { color: #00e676; }
+
+  /* probabilidad para PRÓXIMOS */
+  .prob-wrap { width: 100%; margin-top: 38px; }
+  .prob-label { font-size: 16px; color: #888; letter-spacing: 2px; margin-bottom: 12px; text-transform: uppercase; }
+  .prob-bar {
+    position: relative; height: 26px; border-radius: 13px; overflow: hidden;
+    background: #1b1b1b; display: flex;
+  }
+  .prob-home { background: #00e676; height: 100%; }
+  .prob-draw { background: #555; height: 100%; }
+  .prob-away { background: #fff; height: 100%; }
+  .prob-nums { display: flex; justify-content: space-between; margin-top: 10px; font-size: 18px; font-weight: 800; }
+  .prob-nums .pn span { display: block; font-size: 13px; color: #888; font-weight: 600; }
+
+  /* ====== Pie: contador de partidos + flechas ====== */
+  #footer {
+    position: absolute; bottom: 0; left: 0; right: 0; height: 60px;
+    display: flex; align-items: center; justify-content: center; gap: 18px; z-index: 5;
+  }
+  #hdots { display: flex; gap: 9px; }
+  .hdot { width: 9px; height: 9px; border-radius: 50%; background: #333; transition: background .2s, transform .2s; }
+  .hdot.on { background: #fff; transform: scale(1.3); }
+  .arrow { font-size: 24px; color: #444; font-weight: 900; }
+
+  /* estado vacío / carga / error */
+  .notice {
+    position: absolute; inset: 70px 0 60px 0;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px; text-align: center; padding: 0 50px;
+  }
+  .notice .big { font-size: 30px; font-weight: 900; }
+  .notice .sub { font-size: 18px; color: #888; }
+  .notice .src { font-size: 14px; color: #00e676; letter-spacing: 1px; }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+  /* animación de entrada al cambiar de partido/pestaña */
+  .anim { animation: fade .18s ease-out; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="tabs"></div>
+  <div id="vdots"></div>
+  <div id="stage"></div>
+  <div id="footer">
+    <span class="arrow">‹</span>
+    <div id="hdots"></div>
+    <span class="arrow">›</span>
+  </div>
+</div>
+
+<script>
+/* =====================================================================
+   CONFIGURACIÓN DE LA API  (edítala aquí)
+   ---------------------------------------------------------------------
+   Ejemplo preparado para API-Football (api-sports.io). Cambia la URL,
+   las cabeceras y/o el parser (parseApiResponse) según tu proveedor.
+   Si la API falla, vacía o sin clave, se usan los datos de respaldo.
+   ===================================================================== */
+const API_CONFIG = {
+  ENABLED: false,                              // pon true cuando tengas clave
+  BASE_URL: "https://v3.football.api-sports.io/fixtures",
+  API_KEY:  "TU_API_KEY_AQUI",
+  HEADER_NAME: "x-apisports-key",              // cabecera de autenticación
+  LEAGUE_ID: 1,                                // 1 = Copa del Mundo (API-Football)
+  SEASON: 2026,
+  TIMEZONE: "America/Mexico_City"
+};
+
+/* =====================================================================
+   DATOS DE RESPALDO (fallback) — se usan si la API no responde
+   ===================================================================== */
+const FALLBACK_DATA = {
+  live: [
+    { comp: "GRUPO A", home: "MEX", homeName: "México",   away: "CAN", awayName: "Canadá",
+      hs: 2, as: 1, status: "live", minute: "67'" },
+    { comp: "GRUPO B", home: "ARG", homeName: "Argentina", away: "BRA", awayName: "Brasil",
+      hs: 0, as: 0, status: "live", minute: "23'" },
+    { comp: "GRUPO C", home: "ESP", homeName: "España",   away: "GER", awayName: "Alemania",
+      hs: 1, as: 1, status: "live", minute: "81'" },
+  ],
+  results: [
+    { comp: "GRUPO A", home: "USA", homeName: "EE.UU.",   away: "JPN", awayName: "Japón",
+      hs: 3, as: 2, status: "final" },
+    { comp: "GRUPO D", home: "FRA", homeName: "Francia",  away: "ENG", awayName: "Inglaterra",
+      hs: 1, as: 2, status: "final" },
+    { comp: "GRUPO E", home: "POR", homeName: "Portugal", away: "URU", awayName: "Uruguay",
+      hs: 2, as: 0, status: "final" },
+    { comp: "GRUPO F", home: "NED", homeName: "Países Bajos", away: "CRO", awayName: "Croacia",
+      hs: 1, as: 1, status: "final" },
+  ],
+  upcoming: [
+    { comp: "GRUPO B", home: "ARG", homeName: "Argentina", away: "MEX", awayName: "México",
+      status: "upcoming", time: "19:00", probHome: 58, probDraw: 24, probAway: 18 },
+    { comp: "GRUPO C", home: "ESP", homeName: "España",   away: "FRA", awayName: "Francia",
+      status: "upcoming", time: "21:00", probHome: 41, probDraw: 27, probAway: 32 },
+    { comp: "GRUPO G", home: "BEL", homeName: "Bélgica",  away: "COL", awayName: "Colombia",
+      status: "upcoming", time: "16:00", probHome: 47, probDraw: 28, probAway: 25 },
+  ]
+};
+
+/* =====================================================================
+   PESTAÑAS
+   ===================================================================== */
+const TABS = [
+  { key: "live",     label: "EN VIVO"   },
+  { key: "results",  label: "RESULTADOS"},
+  { key: "upcoming", label: "PRÓXIMOS"  },
+];
+
+let DATA = FALLBACK_DATA;     // se reemplaza si la API responde
+let tabIndex = 0;             // pestaña actual (vertical)
+let matchIndex = [0, 0, 0];   // índice de partido por pestaña (horizontal)
+
+/* =====================================================================
+   RENDERIZADO
+   ===================================================================== */
+const $tabs   = document.getElementById("tabs");
+const $vdots  = document.getElementById("vdots");
+const $stage  = document.getElementById("stage");
+const $hdots  = document.getElementById("hdots");
+
+function renderTabs() {
+  $tabs.innerHTML = "";
+  TABS.forEach((t, i) => {
+    const el = document.createElement("div");
+    el.className = "tab" + (i === tabIndex ? " active" : "") + (t.key === "live" ? " live" : "");
+    el.textContent = t.label;
+    if (t.key === "live" && (DATA.live || []).length) {
+      const dot = document.createElement("span");
+      dot.className = "tab-dot";
+      if (i === tabIndex) el.appendChild(dot);
+    }
+    $tabs.appendChild(el);
+  });
+
+  $vdots.innerHTML = "";
+  TABS.forEach((_, i) => {
+    const d = document.createElement("div");
+    d.className = "vdot" + (i === tabIndex ? " on" : "");
+    $vdots.appendChild(d);
+  });
+}
+
+function currentList() {
+  return DATA[TABS[tabIndex].key] || [];
+}
+
+function renderStage() {
+  const list = currentList();
+  $stage.innerHTML = "";
+  $hdots.innerHTML = "";
+
+  if (!list.length) {
+    const n = document.createElement("div");
+    n.className = "notice anim";
+    n.innerHTML = `
+      <div class="big">${TABS[tabIndex].key === "live" ? "Sin partidos en vivo" : "Sin partidos"}</div>
+      <div class="sub">Desliza ↑ ↓ para cambiar de pestaña</div>`;
+    $stage.appendChild(n);
+    return;
+  }
+
+  // clamp del índice
+  if (matchIndex[tabIndex] >= list.length) matchIndex[tabIndex] = list.length - 1;
+  if (matchIndex[tabIndex] < 0) matchIndex[tabIndex] = 0;
+  const m = list[matchIndex[tabIndex]];
+
+  const wrap = document.createElement("div");
+  wrap.className = "match anim";
+
+  let statusHtml = "";
+  if (m.status === "live") {
+    statusHtml = `<div class="status live"><span class="live-dot"></span>EN VIVO · ${m.minute || ""}</div>`;
+  } else if (m.status === "final") {
+    statusHtml = `<div class="status final">FINAL</div>`;
+  } else {
+    statusHtml = `<div class="status upcoming">${m.time || "—"} · HORA LOCAL</div>`;
+  }
+
+  const hasScore = (m.status === "live" || m.status === "final");
+  const scoreHtml = hasScore
+    ? `<div class="score"><span>${m.hs}</span><span class="sep"> - </span><span>${m.as}</span></div>`
+    : `<div class="score tbd">VS</div>`;
+
+  let probHtml = "";
+  if (m.status === "upcoming" && m.probHome != null) {
+    probHtml = `
+      <div class="prob-wrap">
+        <div class="prob-label">Probabilidad de victoria</div>
+        <div class="prob-bar">
+          <div class="prob-home" style="width:${m.probHome}%"></div>
+          <div class="prob-draw" style="width:${m.probDraw}%"></div>
+          <div class="prob-away" style="width:${m.probAway}%"></div>
+        </div>
+        <div class="prob-nums">
+          <div class="pn">${m.probHome}%<span>${m.home}</span></div>
+          <div class="pn">${m.probDraw}%<span>EMPATE</span></div>
+          <div class="pn">${m.probAway}%<span>${m.away}</span></div>
+        </div>
+      </div>`;
+  }
+
+  wrap.innerHTML = `
+    <div class="competition">${m.comp || ""}</div>
+    ${statusHtml}
+    <div class="scoreline">
+      <div class="team"><div class="abbr">${m.home}</div><div class="name">${m.homeName || ""}</div></div>
+      ${scoreHtml}
+      <div class="team"><div class="abbr">${m.away}</div><div class="name">${m.awayName || ""}</div></div>
+    </div>
+    ${probHtml}`;
+  $stage.appendChild(wrap);
+
+  // puntos horizontales (partidos)
+  list.forEach((_, i) => {
+    const d = document.createElement("div");
+    d.className = "hdot" + (i === matchIndex[tabIndex] ? " on" : "");
+    $hdots.appendChild(d);
+  });
+}
+
+function render() { renderTabs(); renderStage(); }
+
+/* =====================================================================
+   NAVEGACIÓN
+   ===================================================================== */
+function changeTab(dir) {                       // dir: +1 abajo, -1 arriba
+  const next = tabIndex + dir;
+  if (next < 0 || next >= TABS.length) return;
+  tabIndex = next;
+  render();
+}
+function changeMatch(dir) {                      // dir: +1 derecha, -1 izquierda
+  const list = currentList();
+  if (!list.length) return;
+  let next = matchIndex[tabIndex] + dir;
+  if (next < 0) next = 0;
+  if (next >= list.length) next = list.length - 1;
+  matchIndex[tabIndex] = next;
+  renderStage();
+}
+
+/* Teclado (para probar en navegador) */
+window.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowUp")    { changeTab(-1); e.preventDefault(); }
+  if (e.key === "ArrowDown")  { changeTab(+1); e.preventDefault(); }
+  if (e.key === "ArrowLeft")  { changeMatch(-1); e.preventDefault(); }
+  if (e.key === "ArrowRight") { changeMatch(+1); e.preventDefault(); }
+});
+
+/* Swipe táctil */
+let tStartX = 0, tStartY = 0, tracking = false;
+const SWIPE_MIN = 45;     // umbral en px
+const app = document.getElementById("app");
+
+function startGesture(x, y) { tStartX = x; tStartY = y; tracking = true; }
+function endGesture(x, y) {
+  if (!tracking) return;
+  tracking = false;
+  const dx = x - tStartX, dy = y - tStartY;
+  if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE_MIN) return;
+  if (Math.abs(dx) > Math.abs(dy)) {
+    changeMatch(dx < 0 ? +1 : -1);   // swipe izquierda => siguiente
+  } else {
+    changeTab(dy < 0 ? +1 : -1);     // swipe arriba => siguiente pestaña
+  }
+}
+
+app.addEventListener("touchstart", (e) => { const t = e.changedTouches[0]; startGesture(t.clientX, t.clientY); }, {passive:true});
+app.addEventListener("touchend",   (e) => { const t = e.changedTouches[0]; endGesture(t.clientX, t.clientY); }, {passive:true});
+/* Soporte ratón (para pruebas en escritorio) */
+app.addEventListener("mousedown", (e) => startGesture(e.clientX, e.clientY));
+app.addEventListener("mouseup",   (e) => endGesture(e.clientX, e.clientY));
+
+/* =====================================================================
+   CARGA DESDE API + PARSER  (adapta parseApiResponse a tu proveedor)
+   ===================================================================== */
+function abbr(name) {
+  return (name || "").normalize("NFD").replace(/[^A-Za-z ]/g,"")
+    .trim().slice(0,3).toUpperCase() || "???";
+}
+
+/* Convierte la respuesta de API-Football en nuestra estructura.
+   Si usas otra API, reescribe SOLO esta función. */
+function parseApiResponse(json) {
+  const out = { live: [], results: [], upcoming: [] };
+  const items = (json && json.response) || [];
+  for (const it of items) {
+    const ft = it.fixture || {}, teams = it.teams || {}, goals = it.goals || {}, league = it.league || {};
+    const short = (ft.status && ft.status.short) || "";
+    const homeName = teams.home && teams.home.name, awayName = teams.away && teams.away.name;
+    const base = {
+      comp: (league.round || league.name || "MUNDIAL").toUpperCase(),
+      home: abbr(homeName), homeName, away: abbr(awayName), awayName,
+    };
+    if (["1H","2H","HT","ET","P","LIVE"].includes(short)) {
+      out.live.push({ ...base, hs: goals.home ?? 0, as: goals.away ?? 0,
+        status: "live", minute: (ft.status.elapsed ? ft.status.elapsed + "'" : "EN VIVO") });
+    } else if (["FT","AET","PEN"].includes(short)) {
+      out.results.push({ ...base, hs: goals.home ?? 0, as: goals.away ?? 0, status: "final" });
+    } else {                          // NS, TBD, etc.
+      const d = ft.date ? new Date(ft.date) : null;
+      const time = d ? d.toLocaleTimeString("es-MX", {hour:"2-digit", minute:"2-digit"}) : "—";
+      out.upcoming.push({ ...base, status: "upcoming", time,
+        probHome: null, probDraw: null, probAway: null });
+    }
+  }
+  return out;
+}
+
+async function loadData() {
+  if (!API_CONFIG.ENABLED || API_CONFIG.API_KEY === "TU_API_KEY_AQUI") {
+    DATA = FALLBACK_DATA;            // sin clave => respaldo
+    render();
+    return;
+  }
+  try {
+    const url = `${API_CONFIG.BASE_URL}?league=${API_CONFIG.LEAGUE_ID}&season=${API_CONFIG.SEASON}&timezone=${encodeURIComponent(API_CONFIG.TIMEZONE)}`;
+    const res = await fetch(url, { headers: { [API_CONFIG.HEADER_NAME]: API_CONFIG.API_KEY } });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const json = await res.json();
+    const parsed = parseApiResponse(json);
+    const total = parsed.live.length + parsed.results.length + parsed.upcoming.length;
+    DATA = total ? parsed : FALLBACK_DATA;   // respuesta vacía => respaldo
+  } catch (err) {
+    console.warn("API falló, usando datos de respaldo:", err);
+    DATA = FALLBACK_DATA;
+  }
+  render();
+}
+
+/* arranque */
+render();
+loadData();
+</script>
+</body>
+</html>
