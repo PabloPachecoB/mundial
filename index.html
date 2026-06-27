@@ -75,6 +75,10 @@
   .status.live   { color: #00e676; }
   .status.final  { color: #bdbdbd; }
   .status.upcoming { color: #fff; }
+  .status .ko-day  { display:block; font-size:16px; color:#00e676; letter-spacing:3px; margin-bottom:8px; }
+  .status .ko-main { display:block; font-size:34px; font-weight:900; letter-spacing:1px; }
+  .status .ko-main small { font-size:15px; color:#888; font-weight:700; }
+  .status .ko-sub  { display:block; font-size:14px; color:#9a9a9a; letter-spacing:.5px; margin-top:10px; text-transform:none; }
   .status .live-dot {
     display: inline-block; width: 12px; height: 12px; border-radius: 50%;
     background: #00e676; margin-right: 8px; vertical-align: middle;
@@ -188,7 +192,7 @@
    Si la API falla o viene vacía, se usan los DATOS DE RESPALDO.
    ===================================================================== */
 const API_CONFIG = {
-  ENABLED:   true,                             // true = datos reales
+  ENABLED:   false,                            // false = MODO DEMO dinámico (no se llama a la API)
   API_KEY:   "3",                              // "3" = clave pública de prueba
   BASE_URL:  "https://www.thesportsdb.com/api/v1/json",
   LEAGUE_ID: 4429,                             // 4429 = FIFA World Cup
@@ -234,7 +238,7 @@ const FALLBACK_DATA = {
    como clasificados (✓). Se usan si la tabla real viene truncada/vacía.
    ===================================================================== */
 const FALLBACK_GROUPS_RAW = [
-  { name:"GRUPO A", teams:[["MEX","México",3,0,0,7,2],["CRO","Croacia",1,1,1,4,3],["NOR","Noruega",1,0,2,3,5],["RSA","Sudáfrica",0,1,2,2,6]] },
+  { name:"GRUPO A", teams:[["BOL","Bolivia",3,0,0,7,1],["MEX","México",2,0,1,5,3],["CRO","Croacia",1,0,2,4,5],["RSA","Sudáfrica",0,0,3,1,8]] },
   { name:"GRUPO B", teams:[["CAN","Canadá",2,1,0,5,2],["BEL","Bélgica",2,0,1,6,3],["MAR","Marruecos",1,1,1,3,3],["KSA","Arabia Saudí",0,0,3,1,7]] },
   { name:"GRUPO C", teams:[["USA","EE.UU.",2,1,0,6,3],["ENG","Inglaterra",2,1,0,5,2],["IRN","Irán",1,0,2,2,4],["PAN","Panamá",0,0,3,1,5]] },
   { name:"GRUPO D", teams:[["ARG","Argentina",3,0,0,8,1],["SRB","Serbia",1,1,1,4,4],["TUN","Túnez",1,0,2,2,5],["AUS","Australia",0,1,2,2,6]] },
@@ -268,6 +272,82 @@ const FALLBACK_GROUPS = normalizeGroups(FALLBACK_GROUPS_RAW);
 FALLBACK_DATA.groups = FALLBACK_GROUPS;
 
 /* =====================================================================
+   DEMO DINÁMICO  (sin pagar API · Bolivia 🇧🇴 campeón)
+   ---------------------------------------------------------------------
+   Calendario con horas en UTC. Cada partido se "libera" solo según la
+   fecha/hora ACTUAL del dispositivo:
+       antes de su hora  → PRÓXIMO
+       durante (~110min) → EN VIVO
+       después           → RESULTADO
+   "off" = días respecto a HOY · "h" = hora UTC del saque.
+   Bolivia gana todos sus partidos.
+   ===================================================================== */
+const NAME_ES = {
+  "Bolivia":"Bolivia","South Africa":"Sudáfrica","Mexico":"México","Croatia":"Croacia",
+  "Argentina":"Argentina","Saudi Arabia":"Arabia Saudí","Spain":"España","Iran":"Irán",
+  "Brazil":"Brasil","Japan":"Japón","Belgium":"Bélgica","Colombia":"Colombia",
+  "USA":"EE.UU.","England":"Inglaterra","Germany":"Alemania","France":"Francia",
+};
+const esName = n => NAME_ES[n] || n;
+
+const DEMO_FIXTURES = [
+  // ---- pasados (ya jugados, Bolivia ganando) ----
+  { off:-2, h:18, comp:"GRUPO A", H:"Bolivia",   A:"South Africa", hs:3, as:0 },
+  { off:-2, h:21, comp:"GRUPO A", H:"Mexico",    A:"Croatia",      hs:1, as:1 },
+  { off:-2, h:23, comp:"GRUPO D", H:"Argentina", A:"Saudi Arabia", hs:2, as:0 },
+  { off:-1, h:16, comp:"GRUPO G", H:"Spain",     A:"Iran",         hs:4, as:1 },
+  { off:-1, h:19, comp:"GRUPO A", H:"Bolivia",   A:"Mexico",       hs:2, as:1 },
+  { off:-1, h:22, comp:"GRUPO E", H:"Brazil",    A:"Japan",        hs:3, as:1 },
+  // ---- hoy ----
+  { off:0,  h:16, comp:"GRUPO B", H:"Belgium",   A:"Colombia",     hs:1, as:2 },
+  { off:0,  h:19, comp:"GRUPO A", H:"Bolivia",   A:"Croatia",      hs:2, as:0 }, // partido estrella
+  { off:0,  h:22, comp:"GRUPO C", H:"USA",       A:"England",      hs:1, as:1 },
+  // ---- próximos ----
+  { off:1,  h:18, comp:"OCTAVOS", H:"Bolivia",   A:"Brazil",       hs:2, as:1 },
+  { off:1,  h:21, comp:"OCTAVOS", H:"Argentina", A:"Germany",      hs:3, as:2 },
+  { off:2,  h:20, comp:"CUARTOS", H:"Spain",     A:"France",       hs:1, as:0 },
+  { off:3,  h:20, comp:"CUARTOS", H:"Bolivia",   A:"Spain",        hs:3, as:1 },
+];
+
+const MATCH_MS = 110 * 60 * 1000;   // duración aprox. de un partido (en vivo)
+
+/* instante UTC: hoy +off días, a las h:00 UTC */
+function atDayUTC(off, h) {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() + off);
+  d.setUTCHours(h, 0, 0, 0);
+  return d;
+}
+
+/* Reparte el calendario en live/results/upcoming según la hora actual */
+function buildDemoData() {
+  const now = Date.now();
+  const out = { live: [], results: [], upcoming: [], groups: FALLBACK_GROUPS };
+  for (const f of DEMO_FIXTURES) {
+    const ko = atDayUTC(f.off, f.h);
+    const t  = ko.getTime();
+    const base = {
+      comp: f.comp,
+      home: abbr(f.H), homeName: esName(f.H),
+      away: abbr(f.A), awayName: esName(f.A),
+      dt: ko.toISOString(), _ts: ko.toISOString(),
+    };
+    if (now < t) {
+      out.upcoming.push({ ...base, status: "upcoming", probHome: null, probDraw: null, probAway: null });
+    } else if (now < t + MATCH_MS) {
+      const min = Math.max(1, Math.min(90, Math.floor((now - t) / 60000)));
+      out.live.push({ ...base, status: "live", hs: f.hs, as: f.as, minute: min + "'" });
+    } else {
+      out.results.push({ ...base, status: "final", hs: f.hs, as: f.as });
+    }
+  }
+  out.results.sort((a, b) => (a._ts < b._ts ? 1 : -1));   // más recientes primero
+  out.upcoming.sort((a, b) => (a._ts > b._ts ? 1 : -1));  // más cercanos primero
+  return out;
+}
+
+/* =====================================================================
    PESTAÑAS
    ===================================================================== */
 const TABS = [
@@ -287,6 +367,16 @@ const $tabs   = document.getElementById("tabs");
 const $vdots  = document.getElementById("vdots");
 const $stage  = document.getElementById("stage");
 const $hdots  = document.getElementById("hdots");
+
+/* ====== ZONA HORARIA: se adapta automáticamente a quien abre la app ======
+   La hora se muestra en la zona del dispositivo, y siempre también en hora
+   de Bolivia como referencia. */
+const BO_TZ = "America/La_Paz";
+const USER_TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return ""; } })();
+const USER_TZ_LABEL = USER_TZ ? USER_TZ.split("/").pop().replace(/_/g, " ") : "local";
+function clockLocal(date) { return date.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit", hour12: false }); }
+function clockAt(date, tz) { try { return date.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz }); } catch (e) { return ""; } }
+function dayLocal(date) { return date.toLocaleDateString("es", { weekday: "short", day: "2-digit", month: "short" }); }
 
 function renderTabs() {
   $tabs.innerHTML = "";
@@ -347,7 +437,18 @@ function renderStage() {
   } else if (m.status === "final") {
     statusHtml = `<div class="status final">FINAL</div>`;
   } else {
-    statusHtml = `<div class="status upcoming">${m.time || "—"} · HORA LOCAL</div>`;
+    const dt = m.dt ? new Date(m.dt) : null;
+    if (dt && !isNaN(dt)) {
+      const sub = (USER_TZ === BO_TZ)
+        ? `🇧🇴 Hora de Bolivia`
+        : `🇧🇴 ${clockAt(dt, BO_TZ)} Bolivia · 🌍 tu zona: ${USER_TZ_LABEL}`;
+      statusHtml = `<div class="status upcoming">
+        <span class="ko-day">${dayLocal(dt)}</span>
+        <span class="ko-main">${clockLocal(dt)} <small>tu hora</small></span>
+        <span class="ko-sub">${sub}</span></div>`;
+    } else {
+      statusHtml = `<div class="status upcoming">${m.time || "—"} · HORA LOCAL</div>`;
+    }
   }
 
   const hasScore = (m.status === "live" || m.status === "final");
@@ -554,7 +655,8 @@ const TEAM_ABBR = {
   "Costa Rica":"CRC","Panama":"PAN","Honduras":"HON","Jamaica":"JAM","South Africa":"RSA",
   "Tunisia":"TUN","Algeria":"ALG","Ivory Coast":"CIV","Bosnia-Herzegovina":"BIH",
   "Turkey":"TUR","Greece":"GRE","Ukraine":"UKR","Russia":"RUS","New Zealand":"NZL",
-  "Uzbekistan":"UZB","Jordan":"JOR","Cape Verde":"CPV","Curacao":"CUW","Haiti":"HAI"
+  "Uzbekistan":"UZB","Jordan":"JOR","Cape Verde":"CPV","Curacao":"CUW","Haiti":"HAI",
+  "Bolivia":"BOL"
 };
 function abbr(name) {
   if (!name) return "???";
@@ -683,9 +785,18 @@ async function loadData() {
   render();
 }
 
-/* arranque */
-renderLoading();   // muestra "Cargando…" hasta que loadData() pinte datos reales
-loadData();
+/* =====================================================================
+   ARRANQUE — MODO DEMO DINÁMICO (sin pagar API)
+   Los partidos se liberan según la fecha/hora actual y se recalculan cada
+   minuto: lo PRÓXIMO pasa a EN VIVO y luego a RESULTADO solo. Bolivia 🇧🇴
+   va ganando. La hora se adapta a la zona del que abre la app + Bolivia.
+   (loadData() de TheSportsDB queda disponible pero desactivado: la clave
+    gratis solo devolvía 1 próximo partido.)
+   ===================================================================== */
+function refreshDemo() { DATA = buildDemoData(); render(); }
+renderLoading();
+setTimeout(refreshDemo, 350);          // breve "Cargando…" y pinta el demo
+setInterval(refreshDemo, 60 * 1000);   // re-libera partidos cada minuto
 </script>
 </body>
 </html>
